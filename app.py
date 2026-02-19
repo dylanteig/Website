@@ -17,18 +17,7 @@ def now_iso():
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
-    <h1>Class Project Demo</h1>
-
-    <h2>Addition Demo</h2>
-    <form action="/add" method="post">
-        <input type="number" name="a" step="any" required>
-        +
-        <input type="number" name="b" step="any" required>
-        <button type="submit">Add</button>
-    </form>
-
-    <hr>
-
+    <h1>Ski Jump Training Tool</h1>
     <h2>Video Upload</h2>
     <form action="/upload" method="post" enctype="multipart/form-data">
         <input type="file" name="file" required>
@@ -38,15 +27,6 @@ def home():
     <p style="margin-top:20px;">
       Dev tools: <a href="/docs">/docs</a>
     </p>
-    """
-
-@app.post("/add", response_class=HTMLResponse)
-def add(a: float = Form(...), b: float = Form(...)):
-    result = a + b
-    return f"""
-    <h1>Addition Result</h1>
-    <p>{a} + {b} = <strong>{result}</strong></p>
-    <a href="/">Back to home</a>
     """
 
 @app.post("/upload", response_class=HTMLResponse)
