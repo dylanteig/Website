@@ -2,6 +2,8 @@
 import cv2
 import numpy as np
 import csv
+import subprocess
+import imageio_ffmpeg
 from pathlib import Path
 
 # HSV ranges you calibrated
@@ -45,12 +47,17 @@ def force_leftward(vec):
 def process_video(input_path: str, output_video_path: str, output_csv_path: str | None = None) -> dict:
     """
     Reads input video, overlays detections/lines/angle, writes processed mp4.
+    Then transcodes to H.264 for phone/browser compatibility.
     Optionally writes CSV of angles.
-    Returns a small dict of summary info.
     """
     input_path = str(input_path)
     output_video_path = str(output_video_path)
 
+    out_dir = Path(output_video_path).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = str(out_dir / "processed_raw.mp4")
+
+    # Optional CSV
     out_csv = None
     writer = None
     csvfile = None
@@ -69,15 +76,15 @@ def process_video(input_path: str, output_video_path: str, output_csv_path: str 
     w  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    Path(output_video_path).parent.mkdir(parents=True, exist_ok=True)
-
-    # mp4v is OK for demos; for best compatibility you’d encode H.264 via ffmpeg later
+    # Write OpenCV output to RAW file first
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (w, h))
+    out = cv2.VideoWriter(raw_path, fourcc, fps, (w, h))
+    if not out.isOpened():
+        cap.release()
+        raise RuntimeError("Could not open VideoWriter for raw output")
 
     prev_pink_vec = None
     prev_green_vec = None
-
     frame_idx = 0
     frames_with_angle = 0
 
@@ -142,4 +149,27 @@ def process_video(input_path: str, output_video_path: str, output_csv_path: str 
     if csvfile is not None:
         csvfile.close()
 
-    return {"frames": frame_idx, "frames_with_angle": frames_with_angle, "output_video": output_video_path, "output_csv": out_csv}
+    # Transcode RAW -> H.264 MP4 for phone compatibility
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg, "-y",
+        "-i", raw_path,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        output_video_path
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Optional cleanup
+    try:
+        Path(raw_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return {
+        "frames": frame_idx,
+        "frames_with_angle": frames_with_angle,
+        "output_video": output_video_path,
+        "output_csv": out_csv
+    }
