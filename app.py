@@ -11,6 +11,8 @@ app = FastAPI()
 BASE = Path("jobs")
 BASE.mkdir(exist_ok=True)
 
+from tracker import process_video
+
 def now_iso():
     return datetime.utcnow().isoformat() + "Z"
 
@@ -51,6 +53,30 @@ async def upload(file: UploadFile = File(...)):
         "input_path": str(save_path),
     }
     (job_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    # ----------------------------
+    # Run processing (synchronous)
+    # ----------------------------
+    results_dir = job_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    processed_path = results_dir / "processed.mp4"
+    csv_path = results_dir / "angles.csv"  # optional, can remove if you truly don't want it
+
+    # Update status to processing
+    meta["status"] = "processing"
+    (job_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+
+    try:
+        process_video(str(save_path), str(processed_path), str(csv_path))
+
+        meta["status"] = "done"
+        meta["processed_path"] = str(processed_path)
+        meta["csv_path"] = str(csv_path)
+    except Exception as e:
+        meta["status"] = "failed"
+        meta["error"] = str(e)
+
+    (job_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
     # After upload, show a page with a link to watch the video
     return f"""
@@ -60,8 +86,10 @@ async def upload(file: UploadFile = File(...)):
 
     <ul>
       <li><a href="/watch/{job_id}">Watch uploaded video</a></li>
+      <li><a href="/watch-processed/{job_id}">Watch processed video</a></li>
       <li><a href="/status-page/{job_id}">View status</a></li>
       <li><a href="/download/{job_id}">Download uploaded file</a></li>
+      
     </ul>
 
     <a href="/">Back to home</a>
@@ -155,3 +183,54 @@ def download(job_id: str):
         raise HTTPException(status_code=404, detail="Input file missing")
 
     return FileResponse(str(input_path), filename=input_path.name)
+
+
+@app.get("/watch-processed/{job_id}", response_class=HTMLResponse)
+def watch_processed(job_id: str):
+    meta_path = BASE / job_id / "meta.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+
+    meta = json.loads(meta_path.read_text())
+    status = meta.get("status")
+
+    if status != "done":
+        return f"""
+        <h1>Processed video not ready</h1>
+        <p>Status: <strong>{status}</strong></p>
+        <p>{meta.get("error","")}</p>
+        <p><a href="/status-page/{job_id}">View status</a> | <a href="/">Home</a></p>
+        """
+
+    return f"""
+    <h1>Processed Video</h1>
+    <p><strong>Job ID:</strong> {job_id}</p>
+
+    <video controls style="max-width: 95%; height: auto;">
+      <source src="/processed-video/{job_id}" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+
+    <p style="margin-top: 16px;">
+      <a href="/status-page/{job_id}">Status</a> |
+      <a href="/">Home</a>
+    </p>
+    """
+
+
+@app.get("/processed-video/{job_id}")
+def serve_processed_video(job_id: str):
+    meta_path = BASE / job_id / "meta.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="Unknown job_id")
+
+    meta = json.loads(meta_path.read_text())
+    processed_path = meta.get("processed_path")
+    if not processed_path:
+        raise HTTPException(status_code=404, detail="No processed video for this job yet")
+
+    p = Path(processed_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Processed video file missing")
+
+    return FileResponse(str(p), media_type="video/mp4", filename=p.name)
